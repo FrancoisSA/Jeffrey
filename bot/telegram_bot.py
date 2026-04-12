@@ -1,13 +1,14 @@
 """
 Bot Telegram - Point d'entrée des messages utilisateur.
-Reçoit les messages, les transmet à l'agent Claude, et renvoie la réponse.
+Reçoit les messages, les transmet à l'agent Mistral, et renvoie la réponse.
 
 Fonctionnalités :
 - /start : Message de bienvenue
 - /aide : Affiche les commandes disponibles
 - /taches : Liste les tâches en cours
 - /agenda : Liste les événements des 7 prochains jours
-- Tout autre message : traité par Claude en langage naturel
+- Messages texte : traités par Mistral en langage naturel
+- Messages vocaux : transcrits via Whisper puis traités comme du texte
 """
 import logging
 from telegram import Update
@@ -22,6 +23,7 @@ from telegram.ext import (
 from agent.mistral_agent import process_message
 from services.google_tasks import list_tasks
 from services.google_calendar import list_events
+from services.voice import download_and_transcribe
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,53 @@ async def cmd_agenda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Erreur lors du chargement de l'agenda : {e}")
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Gestionnaire pour les messages vocaux.
+    Transcrit le fichier OGG via Whisper, puis traite le texte obtenu
+    exactement comme un message texte ordinaire.
+    """
+    chat_id = update.effective_chat.id
+
+    # Vérifier que le message vient de l'utilisateur autorisé
+    if TELEGRAM_CHAT_ID and str(chat_id) != str(TELEGRAM_CHAT_ID):
+        logger.warning(f"Message vocal rejeté du chat non autorisé : {chat_id}")
+        await update.message.reply_text("❌ Accès non autorisé.")
+        return
+
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        # Télécharger et transcrire le message vocal
+        voice_file = await context.bot.get_file(update.message.voice.file_id)
+        transcribed_text = await download_and_transcribe(voice_file)
+
+        if not transcribed_text:
+            await update.message.reply_text("🎤 Je n'ai pas compris le message vocal. Pouvez-vous réessayer ?")
+            return
+
+        # Informer l'utilisateur de ce qui a été compris
+        await update.message.reply_text(f"🎤 _{transcribed_text}_", parse_mode="Markdown")
+
+        # Traiter le texte transcrit comme un message normal
+        history = _get_history(chat_id)
+        reply = process_message(transcribed_text, conversation_history=history)
+        _update_history(chat_id, transcribed_text, reply)
+
+        # Tronquer si nécessaire
+        max_length = 3000
+        if len(reply) > max_length:
+            reply = reply[:max_length] + "\n\n... [message tronqué]"
+
+        await update.message.reply_text(reply, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Erreur lors du traitement du message vocal : {e}")
+        await update.message.reply_text(
+            f"❌ Erreur lors de la transcription vocale : {e}\n\nEssayez d'envoyer un message texte."
+        )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Gestionnaire principal : traite les messages en langage naturel via Claude.
@@ -206,5 +255,8 @@ def create_application() -> Application:
 
     # Handler pour tous les messages texte (langage naturel)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Handler pour les messages vocaux (transcription Whisper → Mistral)
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     return app

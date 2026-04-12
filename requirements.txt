@@ -8,3 +8,4 @@ streamlit>=1.35.0
 python-dotenv==1.0.0
 pytz==2024.1
 beautifulsoup4==4.12.2
+faster-whisper>=1.0.0
