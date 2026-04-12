@@ -1,0 +1,23 @@
+# Secrets et credentials
+.env
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+venv_local/
+*.egg-info/
+.eggs/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Whisper models cache (téléchargés à la demande)
+~/.cache/huggingface/
