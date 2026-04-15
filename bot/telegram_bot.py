@@ -11,6 +11,7 @@ Fonctionnalités :
 - Messages vocaux : transcrits via Whisper puis traités comme du texte
 """
 import logging
+import time
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -25,6 +26,7 @@ from services.google_tasks import list_tasks
 from services.google_calendar import list_events
 from services.voice import download_and_transcribe
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+from dashboard.journal import log_exchange
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +180,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Traiter le texte transcrit comme un message normal
         history = _get_history(chat_id)
+        t0 = time.monotonic()
         reply = process_message(transcribed_text, conversation_history=history)
+        duration_ms = int((time.monotonic() - t0) * 1000)
         _update_history(chat_id, transcribed_text, reply)
+
+        # Enregistrer l'échange dans le journal du dashboard
+        log_exchange(transcribed_text, reply, message_type="voice", duration_ms=duration_ms)
 
         # Tronquer si nécessaire
         max_length = 3000
@@ -216,11 +223,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Récupérer l'historique de conversation
         history = _get_history(chat_id)
 
-        # Appeler l'agent Claude
+        # Appeler l'agent — mesurer la durée pour le journal
+        t0 = time.monotonic()
         reply = process_message(user_text, conversation_history=history)
+        duration_ms = int((time.monotonic() - t0) * 1000)
 
         # Mettre à jour l'historique
         _update_history(chat_id, user_text, reply)
+
+        # Enregistrer l'échange dans le journal du dashboard
+        log_exchange(user_text, reply, message_type="text", duration_ms=duration_ms)
 
         # Tronquer le message s'il est trop long (limite Telegram ~4096 caractères)
         max_length = 3000  # Marge de sécurité plus grande
